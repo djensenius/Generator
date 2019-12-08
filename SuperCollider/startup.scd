@@ -1,6 +1,8 @@
 var currentFreq, currentVolume, currentType, typeText, font,
 currentGenerator, setFreq, setVol, setType;
 
+s.boot;
+
 SynthDef("SineOscillator", {| freq = 220, mul = 0.5 |
     Out.ar(0, Mix(SinOsc.ar(freq, 0, mul)));
 }).store;
