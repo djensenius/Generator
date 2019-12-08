@@ -109,14 +109,16 @@ thisProcess.addOSCRecvFunc(setFreq);
 
 // Computer Status
 r = Routine({
-	loop {
-		p = Pipe.new(thisProcess.nowExecutingPath.dirname ++ "/cpuInfo.sh", "r");
-		l = p.getLine;
-		cpuInfo = "";
-		while({l.notNil}, {cpuInfo = cpuInfo + "\n" ++ l; l = p.getLine;});
-		p.close;
-		{cpuText.string = cpuInfo}.defer;
-		1.0.yield;
+	fork {
+		loop {
+			p = Pipe.new(thisProcess.nowExecutingPath.dirname ++ "/cpuInfo.sh", "r");
+			l = p.getLine;
+			cpuInfo = "";
+			while({l.notNil}, {cpuInfo = cpuInfo + "\n" ++ l; l = p.getLine;});
+			p.close;
+			{cpuText.string = cpuInfo}.defer;
+			1.0.yield;
+		}
 	}
 });
 SystemClock.play(r);
