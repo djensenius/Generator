@@ -1,6 +1,6 @@
 (
-var currentFreq, currentVolume, currentType, typeText, font,
-currentGenerator, setFreq, setVol, setType;
+var currentFreq, currentVolume, currentType, typeText, cpuText, font,
+currentGenerator, setFreq, setVol, setType, cpuInfo;
 
 // GUI
 w = Window.new("TONE GENERATOR", Window.availableBounds);
@@ -39,20 +39,26 @@ b = StaticText(w, 200@24);
 b.string = "Volume:" + currentVolume ++ "%";
 b.font = font;
 
+d.nextLine;
+
+cpuText = StaticText(w, 400@100);
+cpuText.font = font;
+cpuText.font = Font(size: 13);
+cpuText.string = "Booting";
+
 // Generators
 currentGenerator = Synth.new(\SineOscillator);
 
 // OSC Response
 n = NetAddr.new("192.168.1.219", 57120);
 setFreq = OSCFunc({ arg msg, time, addr, recvPort;
-	[msg, time, addr, recvPort].postln;
+	// [msg, time, addr, recvPort].postln;
 	currentFreq = msg.at(1).asInteger;
 	currentGenerator.set(\freq, currentFreq);
 	{ a.string = "Frequency:" + currentFreq ++ "hz" }.defer;
 }, '/frequency', n);
 
 setFreq = OSCFunc({ arg msg, time, addr, recvPort;
-	[msg, time, addr, recvPort].postln;
 	currentVolume = msg.at(1);
 	currentGenerator.set(\mul, currentVolume);
 	{ b.string = "Volume:" + (currentVolume * 100).asInteger ++ "%" }.defer;
@@ -60,7 +66,6 @@ setFreq = OSCFunc({ arg msg, time, addr, recvPort;
 
 setFreq = OSCFunc({ arg msg, time, addr, recvPort;
 	var selectedOsc;
-	[msg, time, addr, recvPort].postln;
 	selectedOsc = [
 		"SineOscillator",
 		"TriangleOscillator",
@@ -78,6 +83,20 @@ setFreq = OSCFunc({ arg msg, time, addr, recvPort;
 }, '/type', n);
 
 thisProcess.addOSCRecvFunc(setFreq);
+
+// Computer Status
+r = Routine({
+	loop {
+		p = Pipe.new(thisProcess.nowExecutingPath.dirname ++ "/cpuInfo.sh", "r");
+		l = p.getLine;
+		cpuInfo = "";
+		while({l.notNil}, {cpuInfo = cpuInfo + "\n" ++ l; l = p.getLine;});
+		p.close;
+		{cpuText.string = cpuInfo}.defer;
+		1.0.yield;
+	}
+});
+SystemClock.play(r);
 
 // Shutdown
 w.onClose = {
