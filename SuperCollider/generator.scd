@@ -21,7 +21,7 @@ f.active_(true);
 d.nextLine;
 
 leftText = FlowView(w, 250@150);
-rightText = FlowView(w, Rect(0, 0, 550, 500));
+rightText = FlowView(w, Rect(0, 0, 350, 600));
 
 
 currentType = "SineOscillator";
@@ -43,7 +43,7 @@ b = StaticText(leftText, 200@32);
 b.string = "Volume:" + currentVolume ++ "%";
 b.font = font;
 
-cpuText = StaticText(rightText, Rect(0, 0, 550, 500));
+cpuText = StaticText(rightText, Rect(0, 0, 550, 600));
 cpuText.font = font;
 cpuText.string = "Booting";
 cpuText.align = \topLeft;
