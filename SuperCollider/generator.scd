@@ -1,6 +1,6 @@
 (
 var currentFreq, currentVolume, currentType, typeText, cpuText, font,
-currentGenerator, setFreq, setVol, setType, cpuInfo;
+currentGenerator, setFreq, setVol, setType, cpuInfo, leftText, rightText;
 
 // GUI
 w = Window.new("TONE GENERATOR", Window.availableBounds);
@@ -15,36 +15,38 @@ font = Font([
 
 c = Stethoscope.new(s, 1, view:w.view);
 
-f = FreqScopeView.new(w, 100@250);
+f = FreqScopeView.new(w, 350@250);
 f.active_(true);
 
 d.nextLine;
 
+leftText = FlowView(w, 250@150);
+rightText = FlowView(w, Rect(0, 0, 550, 500));
+
+
 currentType = "SineOscillator";
-typeText = StaticText(w, 350@24);
+typeText = StaticText(leftText, 350@32);
 typeText.string = "Type:" + currentType;
 typeText.font = font;
 
 d.nextLine;
 
 currentFreq = 220;
-a = StaticText(w, 250@24);
+a = StaticText(leftText, 250@32);
 a.string = "Frequency:" + currentFreq ++ "hz";
 a.font = font;
 
 d.nextLine;
 
 currentVolume = 20;
-b = StaticText(w, 200@24);
+b = StaticText(leftText, 200@32);
 b.string = "Volume:" + currentVolume ++ "%";
 b.font = font;
 
-d.nextLine;
-
-cpuText = StaticText(w, 400@100);
+cpuText = StaticText(rightText, Rect(0, 0, 550, 500));
 cpuText.font = font;
-cpuText.font = Font(size: 13);
 cpuText.string = "Booting";
+cpuText.align = \topLeft;
 
 // Generators
 currentGenerator = Synth.new(\SineOscillator);
