@@ -75,9 +75,8 @@ cpuText.align = \topLeft;
 currentGenerator = Synth.new(\SineOscillator);
 
 // OSC Response
-n = NetAddr.new("192.168.1.219", 57120);
+n = NetAddr.new("127.0.0.1", nil);
 setFreq = OSCFunc({ arg msg, time, addr, recvPort;
-	// [msg, time, addr, recvPort].postln;
 	currentFreq = msg.at(1).asInteger;
 	currentGenerator.set(\freq, currentFreq);
 	{ a.string = "Frequency:" + currentFreq ++ "hz" }.defer;
