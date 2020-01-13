@@ -14,4 +14,4 @@ PEC11-4215F-S24 Rotary Encoder x 3
 
 [Ethernet Mount](https://www.buyapi.ca/product/panel-mount-ethernet-extension-cable/)
 
-[USB Mount](https://www.buyapi.ca/product/panel-mount-usb-cable-a-male-to-a-female/) x 3
+[USB Mount](https://www.buyapi.ca/product/panel-mount-usb-cable-a-male-to-a-female/) x 4
