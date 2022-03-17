@@ -1,15 +1,51 @@
 extern crate anyhow;
 extern crate clap;
 extern crate cpal;
+extern crate rosc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::thread;
+use rosc::OscPacket;
+use rosc::decoder;
+use std::env;
+use std::net::{SocketAddrV4, UdpSocket};
+use std::str::FromStr;
 
 fn main() {
+    // Start sound
     thread::spawn(move || {
         let _r = run();
     });
-    loop { }
+
+    // OSC setup
+    let args: Vec<String> = env::args().collect();
+    let usage = format!("Usage {} IP:PORT", &args[0]);
+    if args.len() < 2 {
+        println!("{}", usage);
+        ::std::process::exit(1)
+    }
+    let addr = match SocketAddrV4::from_str(&args[1]) {
+        Ok(addr) => addr,
+        Err(_) => panic!("{}", usage),
+    };
+    let sock = UdpSocket::bind(addr).unwrap();
+    println!("Listening to {}", addr);
+
+    let mut buf = [0u8; decoder::MTU];
+
+    loop {
+        match sock.recv_from(&mut buf) {
+            Ok((size, addr)) => {
+                println!("Received packet with size {} from: {}", size, addr);
+                let packet = decoder::decode(&buf[..size]).unwrap();
+                handle_packet(packet);
+            }
+            Err(e) => {
+                println!("Error receiving from socket: {}", e);
+                break;
+            }
+        }
+    }
 }
 
 fn run() -> Result<(), anyhow::Error> {
@@ -108,6 +144,18 @@ where
         let value: T = cpal::Sample::from::<f32>(&on_sample(request));
         for sample in frame.iter_mut() {
             *sample = value;
+        }
+    }
+}
+
+fn handle_packet(packet: OscPacket) {
+    match packet {
+        OscPacket::Message(msg) => {
+            println!("OSC address: {}", msg.addr);
+            println!("OSC arguments: {:?}", msg.args);
+        }
+        OscPacket::Bundle(bundle) => {
+            println!("OSC Bundle: {:?}", bundle);
         }
     }
 }
