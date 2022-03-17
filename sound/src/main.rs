@@ -3,11 +3,21 @@ extern crate clap;
 extern crate cpal;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::thread;
 
-fn main() -> anyhow::Result<()> {
+fn main() {
+    thread::spawn(move || {
+        let _r = run();
+    });
+    loop { }
+}
+
+fn run() -> Result<(), anyhow::Error> {
     let stream = stream_setup_for(sample_next)?;
     stream.play()?;
-    std::thread::sleep(std::time::Duration::from_millis(3000));
+
+    // Park the thread so out noise plays continuously until the app is closed
+    std::thread::park();
     Ok(())
 }
 
