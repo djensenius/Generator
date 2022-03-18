@@ -10,11 +10,19 @@ use rosc::decoder;
 use std::env;
 use std::net::{SocketAddrV4, UdpSocket};
 use std::str::FromStr;
+use crossbeam_channel;
+
+#[derive(Debug)]
+pub enum Message {
+    Frequency(f32),
+    Amplitude(f32),
+}
 
 fn main() {
     // Start sound
+    let (command_sender, command_receiver) = crossbeam_channel::bounded(1024);
     thread::spawn(move || {
-        let _r = run();
+        let _r = run(command_receiver.clone());
     });
 
     // OSC setup
@@ -35,10 +43,9 @@ fn main() {
 
     loop {
         match sock.recv_from(&mut buf) {
-            Ok((size, addr)) => {
-                println!("Received packet with size {} from: {}", size, addr);
+            Ok((size, _addr)) => {
                 let packet = decoder::decode(&buf[..size]).unwrap();
-                handle_packet(packet);
+                handle_packet(packet, command_sender.clone());
             }
             Err(e) => {
                 println!("Error receiving from socket: {}", e);
@@ -48,8 +55,8 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), anyhow::Error> {
-    let stream = stream_setup_for(sample_next)?;
+fn run(command_receiver: crossbeam_channel::Receiver<Message>) -> Result<(), anyhow::Error> {
+    let stream = stream_setup_for(sample_next, command_receiver.clone())?;
     stream.play()?;
 
     // Park the thread so out noise plays continuously until the app is closed
@@ -57,9 +64,9 @@ fn run() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn sample_next(o: &mut SampleRequestOptions) -> f32 {
+fn sample_next(o: &mut SampleRequestOptions, frequency: f32, amplitude: f32) -> f32 {
     o.tick();
-    o.tone(440.) * 0.1
+    o.tone(frequency) * amplitude
 }
 
 pub struct SampleRequestOptions {
@@ -77,16 +84,16 @@ impl SampleRequestOptions {
     }
 }
 
-pub fn stream_setup_for<F>(on_sample: F) -> Result<cpal::Stream, anyhow::Error>
+pub fn stream_setup_for<F>(on_sample: F, command_receiver: crossbeam_channel::Receiver<Message>) -> Result<cpal::Stream, anyhow::Error>
 where
-    F: FnMut(&mut SampleRequestOptions) -> f32 + std::marker::Send + 'static + Copy,
+    F: FnMut(&mut SampleRequestOptions, f32, f32) -> f32 + std::marker::Send + 'static + Copy,
 {
     let (_host, device, config) = host_device_setup()?;
 
     match config.sample_format() {
-        cpal::SampleFormat::F32 => stream_make::<f32, _>(&device, &config.into(), on_sample),
-        cpal::SampleFormat::I16 => stream_make::<i16, _>(&device, &config.into(), on_sample),
-        cpal::SampleFormat::U16 => stream_make::<u16, _>(&device, &config.into(), on_sample),
+        cpal::SampleFormat::F32 => stream_make::<f32, _>(&device, &config.into(), on_sample, command_receiver.clone()),
+        cpal::SampleFormat::I16 => stream_make::<i16, _>(&device, &config.into(), on_sample, command_receiver.clone()),
+        cpal::SampleFormat::U16 => stream_make::<u16, _>(&device, &config.into(), on_sample, command_receiver.clone()),
     }
 }
 
@@ -109,10 +116,11 @@ pub fn stream_make<T, F>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     on_sample: F,
+    command_receiver: crossbeam_channel::Receiver<Message>,
 ) -> Result<cpal::Stream, anyhow::Error>
 where
     T: cpal::Sample,
-    F: FnMut(&mut SampleRequestOptions) -> f32 + std::marker::Send + 'static + Copy,
+    F: FnMut(&mut SampleRequestOptions, f32, f32) -> f32 + std::marker::Send + 'static + Copy,
 {
     let sample_rate = config.sample_rate.0 as f32;
     let sample_clock = 0f32;
@@ -124,10 +132,25 @@ where
     };
     let err_fn = |err| eprintln!("Error building output sound stream: {}", err);
 
+    let mut frequency = 330.;
+    let mut amplitude = 0.1;
+
     let stream = device.build_output_stream(
         config,
         move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
-            on_window(output, &mut request, on_sample)
+            while let Ok(command) = command_receiver.try_recv() {
+                println!("Received Message: {:?}", command);
+                match command {
+                    Message::Amplitude(val) => {
+                        amplitude = val;
+                    }
+
+                    Message::Frequency(val) => {
+                        frequency = val;
+                    }
+                }
+            }
+            on_window(output, &mut request, on_sample, frequency, amplitude)
         },
         err_fn,
     )?;
@@ -135,25 +158,39 @@ where
     Ok(stream)
 }
 
-fn on_window<T, F>(output: &mut [T], request: &mut SampleRequestOptions, mut on_sample: F)
+fn on_window<T, F>(output: &mut [T], request: &mut SampleRequestOptions, mut on_sample: F, frequency: f32, amplitude: f32)
 where
     T: cpal::Sample,
-    F: FnMut(&mut SampleRequestOptions) -> f32 + std::marker::Send + 'static,
+    F: FnMut(&mut SampleRequestOptions, f32, f32) -> f32 + std::marker::Send + 'static,
 {
     for frame in output.chunks_mut(request.nchannels) {
-        let value: T = cpal::Sample::from::<f32>(&on_sample(request));
+        let value: T = cpal::Sample::from::<f32>(&on_sample(request, frequency, amplitude));
         for sample in frame.iter_mut() {
             *sample = value;
         }
     }
 }
 
-fn handle_packet(packet: OscPacket) {
+fn handle_packet(packet: OscPacket, command_sender: crossbeam_channel::Sender<Message>) {
     match packet {
         OscPacket::Message(msg) => {
-            println!("OSC address: {}", msg.addr);
-            println!("OSC arguments: {:?}", msg.args);
+            if msg.addr == String::from("/sine/amplitude") {
+                for arg in msg.args {
+                    match arg {
+                        rosc::OscType::Float(x) => command_sender.send(Message::Amplitude(x)).unwrap(),
+                        _ => (),
+                    }
+                }
+            } else if msg.addr == String::from("/sine/frequency") {
+                for arg in msg.args {
+                    match arg {
+                        rosc::OscType::Float(x) => command_sender.send(Message::Frequency(x)).unwrap(),
+                        _ => (),
+                    }
+                }
+            }
         }
+
         OscPacket::Bundle(bundle) => {
             println!("OSC Bundle: {:?}", bundle);
         }
