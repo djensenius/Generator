@@ -65,22 +65,26 @@ fn run(command_receiver: crossbeam_channel::Receiver<SoundMessage>) -> Result<()
     Ok(())
 }
 
-fn sample_next(o: &mut SampleRequestOptions, instruments: [Instrument; 4]) -> f32 {
+fn sample_next(o: &mut SampleRequestOptions, instruments: [Instrument; 4], channel: Channel) -> f32 {
     o.tick();
     let mut f: f32 = 0.;
     for instrument in &instruments {
         if instrument.on {
+            let mut amplitude = instrument.amplitude;
+            if (instrument.pan > 0. && channel == Channel::Left) || (instrument.pan < 0. && channel == Channel::Right) {
+                amplitude = amplitude - (amplitude * instrument.pan.abs());
+            }
             if instrument.sound == Sound::Sine {
-                f += o.sine(instrument.frequency) * instrument.amplitude;
+                f += o.sine(instrument.frequency) * amplitude;
             }
             if instrument.sound == Sound::Saw {
-                f += o.saw(instrument.frequency) * instrument.amplitude;
+                f += o.saw(instrument.frequency) * amplitude;
             }
             if instrument.sound == Sound::Square {
-                f += o.square(instrument.frequency) * instrument.amplitude;
+                f += o.square(instrument.frequency) * amplitude;
             }
             if instrument.sound == Sound::Triangle {
-                f += o.triangle(instrument.frequency) * instrument.amplitude;
+                f += o.triangle(instrument.frequency) * amplitude;
             }
         }
     }
@@ -100,6 +104,12 @@ pub enum Sound {
     Square,
     Triangle,
     None,
+}
+
+#[derive(PartialEq)]
+pub enum Channel {
+    Left,
+    Right,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -152,7 +162,7 @@ impl SampleRequestOptions {
 
 pub fn stream_setup_for<F>(on_sample: F, command_receiver: crossbeam_channel::Receiver<SoundMessage>) -> Result<cpal::Stream, anyhow::Error>
 where
-    F: FnMut(&mut SampleRequestOptions, [Instrument; 4]) -> f32 + std::marker::Send + 'static + Copy,
+    F: FnMut(&mut SampleRequestOptions, [Instrument; 4], Channel) -> f32 + std::marker::Send + 'static + Copy,
 {
     let (_host, device, config) = host_device_setup()?;
 
@@ -186,7 +196,7 @@ pub fn stream_make<T, F>(
 ) -> Result<cpal::Stream, anyhow::Error>
 where
     T: cpal::Sample,
-    F: FnMut(&mut SampleRequestOptions, [Instrument; 4]) -> f32 + std::marker::Send + 'static + Copy,
+    F: FnMut(&mut SampleRequestOptions, [Instrument; 4], Channel) -> f32 + std::marker::Send + 'static + Copy,
 {
     let sample_rate = config.sample_rate.0 as f32;
     let sample_clock = 0_f32;
@@ -294,12 +304,12 @@ where
 fn on_window<T, F>(output: &mut [T], request: &mut SampleRequestOptions, mut on_sample: F, instruments: [Instrument; 4])
 where
     T: cpal::Sample,
-    F: FnMut(&mut SampleRequestOptions, [Instrument; 4]) -> f32 + std::marker::Send + 'static,
+    F: FnMut(&mut SampleRequestOptions, [Instrument; 4], Channel) -> f32 + std::marker::Send + 'static,
 {
     for frame in output.chunks_mut(request.nchannels) {
         // let value: T = cpal::Sample::from::<f32>(&on_sample(request, frequency, amplitude));
-        let left: T = cpal::Sample::from::<f32>(&on_sample(request, instruments.clone()));
-        let right: T = cpal::Sample::from::<f32>(&on_sample(request, instruments.clone()));
+        let left: T = cpal::Sample::from::<f32>(&on_sample(request, instruments.clone(), Channel::Left));
+        let right: T = cpal::Sample::from::<f32>(&on_sample(request, instruments.clone(), Channel::Right));
         for (channel, sample) in frame.iter_mut().enumerate() {
             // *sample = value;
             if channel & 1 == 0 {
@@ -339,6 +349,10 @@ fn handle_packet(packet: OscPacket, command_sender: crossbeam_channel::Sender<So
             } else if variable == "frequency" {
                 for arg in msg.args {
                     if let rosc::OscType::Float(x) = arg { command_sender.send(SoundMessage { sound: msg_sound.clone(), message: Message::Frequency(x)}).unwrap() };
+                }
+            } else if variable == "pan" {
+                for arg in msg.args {
+                    if let rosc::OscType::Float(x) =  arg { command_sender.send(SoundMessage { sound: msg_sound.clone(), message: Message::Pan(x)}).unwrap() };
                 }
             } else if variable == "on" {
                 for arg in msg.args {
