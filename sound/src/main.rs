@@ -10,7 +10,6 @@ use rosc::decoder;
 use std::env;
 use std::net::{SocketAddrV4, UdpSocket};
 use std::str::FromStr;
-use crossbeam_channel;
 
 #[derive(Debug)]
 pub enum Message {
@@ -24,7 +23,7 @@ fn main() {
     // Start sound
     let (command_sender, command_receiver) = crossbeam_channel::bounded(1024);
     thread::spawn(move || {
-        let _r = run(command_receiver.clone());
+        let _r = run(command_receiver);
     });
 
     // OSC setup
@@ -58,7 +57,7 @@ fn main() {
 }
 
 fn run(command_receiver: crossbeam_channel::Receiver<SoundMessage>) -> Result<(), anyhow::Error> {
-    let stream = stream_setup_for(sample_next, command_receiver.clone())?;
+    let stream = stream_setup_for(sample_next, command_receiver)?;
     stream.play()?;
 
     // Park the thread so out noise plays continuously until the app is closed
@@ -69,19 +68,19 @@ fn run(command_receiver: crossbeam_channel::Receiver<SoundMessage>) -> Result<()
 fn sample_next(o: &mut SampleRequestOptions, instruments: [Instrument; 4]) -> f32 {
     o.tick();
     let mut f: f32 = 0.;
-    for i in 0..instruments.len() {
-        if instruments[i].on {
-            if instruments[i].sound == Sound::Sine {
-                f += o.sine(instruments[i].frequency) * instruments[i].amplitude;
+    for instrument in &instruments {
+        if instrument.on {
+            if instrument.sound == Sound::Sine {
+                f += o.sine(instrument.frequency) * instrument.amplitude;
             }
-            if instruments[i].sound == Sound::Saw {
-                f += o.saw(instruments[i].frequency) * instruments[i].amplitude;
+            if instrument.sound == Sound::Saw {
+                f += o.saw(instrument.frequency) * instrument.amplitude;
             }
-            if instruments[i].sound == Sound::Square {
-                f += o.square(instruments[i].frequency) * instruments[i].amplitude;
+            if instrument.sound == Sound::Square {
+                f += o.square(instrument.frequency) * instrument.amplitude;
             }
-            if instruments[i].sound == Sound::Triangle {
-                f += o.triangle(instruments[i].frequency) * instruments[i].amplitude;
+            if instrument.sound == Sound::Triangle {
+                f += o.triangle(instrument.frequency) * instrument.amplitude;
             }
         }
     }
@@ -158,9 +157,9 @@ where
     let (_host, device, config) = host_device_setup()?;
 
     match config.sample_format() {
-        cpal::SampleFormat::F32 => stream_make::<f32, _>(&device, &config.into(), on_sample, command_receiver.clone()),
-        cpal::SampleFormat::I16 => stream_make::<i16, _>(&device, &config.into(), on_sample, command_receiver.clone()),
-        cpal::SampleFormat::U16 => stream_make::<u16, _>(&device, &config.into(), on_sample, command_receiver.clone()),
+        cpal::SampleFormat::F32 => stream_make::<f32, _>(&device, &config.into(), on_sample, command_receiver),
+        cpal::SampleFormat::I16 => stream_make::<i16, _>(&device, &config.into(), on_sample, command_receiver),
+        cpal::SampleFormat::U16 => stream_make::<u16, _>(&device, &config.into(), on_sample, command_receiver),
     }
 }
 
@@ -315,7 +314,7 @@ where
 fn handle_packet(packet: OscPacket, command_sender: crossbeam_channel::Sender<SoundMessage>) {
     match packet {
         OscPacket::Message(msg) => {
-            let split = msg.addr.split("/");
+            let split = msg.addr.split('/');
             let vec = split.collect::<Vec<&str>>();
             let sound = vec[1];
             let variable = vec[2];
@@ -333,26 +332,17 @@ fn handle_packet(packet: OscPacket, command_sender: crossbeam_channel::Sender<So
 
 
             println!("Sound {}, Variable {}", vec[1], vec[2]);
-            if variable == String::from("amplitude") {
+            if variable == "amplitude" {
                 for arg in msg.args {
-                    match arg {
-                        rosc::OscType::Float(x) => command_sender.send(SoundMessage {sound: msg_sound.clone(), message: Message::Amplitude(x)}).unwrap(),
-                        _ => (),
-                    }
+                     if let rosc::OscType::Float(x) = arg { command_sender.send(SoundMessage {sound: msg_sound.clone(), message: Message::Amplitude(x)}).unwrap() };
                 }
-            } else if variable == String::from("frequency") {
+            } else if variable == "frequency" {
                 for arg in msg.args {
-                    match arg {
-                        rosc::OscType::Float(x) => command_sender.send(SoundMessage { sound: msg_sound.clone(), message: Message::Frequency(x)}).unwrap(),
-                        _ => (),
-                    }
+                    if let rosc::OscType::Float(x) = arg { command_sender.send(SoundMessage { sound: msg_sound.clone(), message: Message::Frequency(x)}).unwrap() };
                 }
             } else if variable == "on" {
                 for arg in msg.args {
-                    match arg {
-                        rosc::OscType::Bool(x) => command_sender.send(SoundMessage { sound: msg_sound.clone(), message: Message::On(x)}).unwrap(),
-                        _ => (),
-                    }
+                    if let rosc::OscType::Bool(x) =  arg { command_sender.send(SoundMessage { sound: msg_sound.clone(), message: Message::On(x)}).unwrap() };
                 }
             }
         }
