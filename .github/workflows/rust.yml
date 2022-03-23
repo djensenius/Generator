@@ -18,7 +18,9 @@ jobs:
     - uses: actions/checkout@v2
     - name: Install sound library
       run: sudo apt-get install libasound2-dev
-    - name: Build
+    - name: Lint sound
+      run: cd sound; cargo clippy -- -D warnings
+    - name: Build sound
       run: cd sound; cargo build --verbose
-    - name: Run tests
+    - name: Run tests on sound
       run: cd sound; cargo test --verbose
