@@ -16,6 +16,8 @@ use crossbeam_channel;
 pub enum Message {
     Frequency(f32),
     Amplitude(f32),
+    Pan(f32),
+    On(bool),
 }
 
 fn main() {
@@ -55,7 +57,7 @@ fn main() {
     }
 }
 
-fn run(command_receiver: crossbeam_channel::Receiver<Message>) -> Result<(), anyhow::Error> {
+fn run(command_receiver: crossbeam_channel::Receiver<SoundMessage>) -> Result<(), anyhow::Error> {
     let stream = stream_setup_for(sample_next, command_receiver.clone())?;
     stream.play()?;
 
@@ -64,9 +66,26 @@ fn run(command_receiver: crossbeam_channel::Receiver<Message>) -> Result<(), any
     Ok(())
 }
 
-fn sample_next(o: &mut SampleRequestOptions, frequency: f32, amplitude: f32) -> f32 {
+fn sample_next(o: &mut SampleRequestOptions, instruments: [Instrument; 4]) -> f32 {
     o.tick();
-    o.tone(frequency) * amplitude
+    let mut f: f32 = 0.;
+    for i in 0..instruments.len() {
+        if instruments[i].on {
+            if instruments[i].sound == Sound::Sine {
+                f += o.sine(instruments[i].frequency) * instruments[i].amplitude;
+            }
+            if instruments[i].sound == Sound::Saw {
+                f += o.saw(instruments[i].frequency) * instruments[i].amplitude;
+            }
+            if instruments[i].sound == Sound::Square {
+                f += o.square(instruments[i].frequency) * instruments[i].amplitude;
+            }
+            if instruments[i].sound == Sound::Triangle {
+                f += o.triangle(instruments[i].frequency) * instruments[i].amplitude;
+            }
+        }
+    }
+    f
 }
 
 pub struct SampleRequestOptions {
@@ -75,18 +94,66 @@ pub struct SampleRequestOptions {
     pub nchannels: usize,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum Sound {
+    Sine,
+    Saw,
+    Square,
+    Triangle,
+    None,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Instrument {
+    sound: Sound,
+    frequency: f32,
+    amplitude: f32,
+    pan: f32,
+    on: bool
+}
+
+#[derive(Debug)]
+pub struct SoundMessage {
+    pub sound: Sound,
+    pub message: Message,
+}
+
 impl SampleRequestOptions {
-    fn tone(&self, freq: f32) -> f32 {
-        (self.sample_clock * freq * 2.0 * std::f32::consts::PI / self.sample_rate).sin()
+    fn sine(&self, freq: f32) -> f32 {
+        // This is 1 because number of channels is 1?
+        const TAU: f32 = 1_f32 * std::f32::consts::PI;
+        let period: f32 = self.sample_clock / self.sample_rate;
+        (freq * TAU * period).sin()
     }
+
+    fn saw(&self, freq: f32) -> f32 {
+        let period: f32 = self.sample_clock / self.sample_rate;
+        (((freq * period) % 2_f32) - 0.5) * 1_f32
+    }
+
+    fn square(&self, freq: f32) -> f32 {
+        const TAU: f32 = 1_f32 * std::f32::consts::PI;
+        let period: f32 = self.sample_clock / self.sample_rate;
+        match (freq * TAU * period).sin() {
+            i if i > 0_f32 => 1_f32,
+            _ => -1_f32,
+        }
+    }
+
+    fn triangle(&self, freq: f32) -> f32 {
+        const TAU: f32 = 1_f32 * std::f32::consts::PI;
+        let period: f32 = self.sample_clock / self.sample_rate;
+        (freq * TAU * period).sin().asin() * (2_f32 / std::f32::consts::PI)
+    }
+
     fn tick(&mut self) {
         self.sample_clock = (self.sample_clock + 1.0) % self.sample_rate;
     }
 }
 
-pub fn stream_setup_for<F>(on_sample: F, command_receiver: crossbeam_channel::Receiver<Message>) -> Result<cpal::Stream, anyhow::Error>
+pub fn stream_setup_for<F>(on_sample: F, command_receiver: crossbeam_channel::Receiver<SoundMessage>) -> Result<cpal::Stream, anyhow::Error>
 where
-    F: FnMut(&mut SampleRequestOptions, f32, f32) -> f32 + std::marker::Send + 'static + Copy,
+    F: FnMut(&mut SampleRequestOptions, [Instrument; 4]) -> f32 + std::marker::Send + 'static + Copy,
 {
     let (_host, device, config) = host_device_setup()?;
 
@@ -116,14 +183,14 @@ pub fn stream_make<T, F>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     on_sample: F,
-    command_receiver: crossbeam_channel::Receiver<Message>,
+    command_receiver: crossbeam_channel::Receiver<SoundMessage>,
 ) -> Result<cpal::Stream, anyhow::Error>
 where
     T: cpal::Sample,
-    F: FnMut(&mut SampleRequestOptions, f32, f32) -> f32 + std::marker::Send + 'static + Copy,
+    F: FnMut(&mut SampleRequestOptions, [Instrument; 4]) -> f32 + std::marker::Send + 'static + Copy,
 {
     let sample_rate = config.sample_rate.0 as f32;
-    let sample_clock = 0f32;
+    let sample_clock = 0_f32;
     let nchannels = config.channels as usize;
     let mut request = SampleRequestOptions {
         sample_rate,
@@ -132,25 +199,92 @@ where
     };
     let err_fn = |err| eprintln!("Error building output sound stream: {}", err);
 
-    let mut frequency = 330.;
-    let mut amplitude = 0.1;
+    let mut sine  = Instrument {
+        sound: Sound::Sine,
+        frequency: 0.,
+        amplitude: 0.,
+        pan: 0.,
+        on: false,
+    };
+
+    let mut saw  = Instrument {
+        sound: Sound::Saw,
+        frequency: 0.,
+        amplitude: 0.,
+        pan: 0.,
+        on: false,
+    };
+
+    let mut square = Instrument {
+        sound: Sound::Saw,
+        frequency: 0.,
+        amplitude: 0.,
+        pan: 0.,
+        on: false,
+    };
+
+    let mut triangle = Instrument {
+        sound: Sound::Triangle,
+        frequency: 0.,
+        amplitude: 0.,
+        pan: 0.,
+        on: false,
+    };
+
+    let mut none = Instrument {
+        sound: Sound::None,
+        frequency: 0.,
+        amplitude: 0.,
+        pan: 0.,
+        on: false,
+    };
 
     let stream = device.build_output_stream(
         config,
         move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
             while let Ok(command) = command_receiver.try_recv() {
                 println!("Received Message: {:?}", command);
-                match command {
+                let mut _modify_sound = &mut none;
+                match command.sound {
+                    Sound::Sine => {
+                        _modify_sound = &mut sine;
+                    }
+
+                    Sound::Saw => {
+                        _modify_sound = &mut saw;
+                    }
+
+                    Sound::Square => {
+                        _modify_sound = &mut square;
+                    }
+
+                    Sound::Triangle => {
+                        _modify_sound = &mut triangle;
+                    }
+
+                    Sound::None => {
+                        _modify_sound = &mut none;
+                    }
+                }
+                match command.message {
                     Message::Amplitude(val) => {
-                        amplitude = val;
+                        _modify_sound.amplitude = val;
                     }
 
                     Message::Frequency(val) => {
-                        frequency = val;
+                        _modify_sound.frequency = val;
+                    }
+
+                    Message::Pan(val) => {
+                        _modify_sound.pan = val;
+                    }
+
+                    Message::On(val) => {
+                        _modify_sound.on = val;
                     }
                 }
             }
-            on_window(output, &mut request, on_sample, frequency, amplitude)
+            on_window(output, &mut request, on_sample, [sine.clone(), saw.clone(), square.clone(), triangle.clone()])
         },
         err_fn,
     )?;
@@ -158,33 +292,65 @@ where
     Ok(stream)
 }
 
-fn on_window<T, F>(output: &mut [T], request: &mut SampleRequestOptions, mut on_sample: F, frequency: f32, amplitude: f32)
+fn on_window<T, F>(output: &mut [T], request: &mut SampleRequestOptions, mut on_sample: F, instruments: [Instrument; 4])
 where
     T: cpal::Sample,
-    F: FnMut(&mut SampleRequestOptions, f32, f32) -> f32 + std::marker::Send + 'static,
+    F: FnMut(&mut SampleRequestOptions, [Instrument; 4]) -> f32 + std::marker::Send + 'static,
 {
     for frame in output.chunks_mut(request.nchannels) {
-        let value: T = cpal::Sample::from::<f32>(&on_sample(request, frequency, amplitude));
-        for sample in frame.iter_mut() {
-            *sample = value;
+        // let value: T = cpal::Sample::from::<f32>(&on_sample(request, frequency, amplitude));
+        let left: T = cpal::Sample::from::<f32>(&on_sample(request, instruments.clone()));
+        let right: T = cpal::Sample::from::<f32>(&on_sample(request, instruments.clone()));
+        for (channel, sample) in frame.iter_mut().enumerate() {
+            // *sample = value;
+            if channel & 1 == 0 {
+                *sample = left;
+            } else {
+                *sample = right;
+            }
         }
     }
 }
 
-fn handle_packet(packet: OscPacket, command_sender: crossbeam_channel::Sender<Message>) {
+fn handle_packet(packet: OscPacket, command_sender: crossbeam_channel::Sender<SoundMessage>) {
     match packet {
         OscPacket::Message(msg) => {
-            if msg.addr == String::from("/sine/amplitude") {
+            let split = msg.addr.split("/");
+            let vec = split.collect::<Vec<&str>>();
+            let sound = vec[1];
+            let variable = vec[2];
+
+            let mut msg_sound: Sound = Sound::None;
+            if sound == "sine" {
+                msg_sound = Sound::Sine;
+            } else if sound == "saw" {
+                msg_sound = Sound::Saw;
+            } else if sound == "square" {
+                msg_sound = Sound::Square;
+            } else if sound == "triangle" {
+                msg_sound = Sound::Triangle;
+            }
+
+
+            println!("Sound {}, Variable {}", vec[1], vec[2]);
+            if variable == String::from("amplitude") {
                 for arg in msg.args {
                     match arg {
-                        rosc::OscType::Float(x) => command_sender.send(Message::Amplitude(x)).unwrap(),
+                        rosc::OscType::Float(x) => command_sender.send(SoundMessage {sound: msg_sound.clone(), message: Message::Amplitude(x)}).unwrap(),
                         _ => (),
                     }
                 }
-            } else if msg.addr == String::from("/sine/frequency") {
+            } else if variable == String::from("frequency") {
                 for arg in msg.args {
                     match arg {
-                        rosc::OscType::Float(x) => command_sender.send(Message::Frequency(x)).unwrap(),
+                        rosc::OscType::Float(x) => command_sender.send(SoundMessage { sound: msg_sound.clone(), message: Message::Frequency(x)}).unwrap(),
+                        _ => (),
+                    }
+                }
+            } else if variable == "on" {
+                for arg in msg.args {
+                    match arg {
+                        rosc::OscType::Bool(x) => command_sender.send(SoundMessage { sound: msg_sound.clone(), message: Message::On(x)}).unwrap(),
                         _ => (),
                     }
                 }
